@@ -1,4 +1,18 @@
 
+// http://lclevy.free.fr/mo3/mod.txt
+
+static int array_is_ascii( uint8_t *a , int bytes )
+{
+  for(;bytes;bytes--,a++)
+  {
+//    printf("%02x ",*a);
+    if(*a< 32)return 0;
+    if(*a>126)return 0;
+  }
+  return 1;
+}
+
+
 void mod_import( FILE *f )
 // IMPL
 {
@@ -14,21 +28,24 @@ void mod_import( FILE *f )
   assert(1==fread(mod.songname,20,1,f));
 //  printf("songname %s\n",mod.songname);
 
+  {
+    // euristica 15/31 strumenti
+    FILE_INSTR instr;
+    long pos = ftell(f);
+    uint8_t M_K_[4];
+    fseek(f,0x438,SEEK_SET);  // puntiamo alla targa M.K. o simile
+    assert(1==fread(M_K_,sizeof(M_K_),1,f));
+    fseek(f,pos,SEEK_SET);  // undo fread'ing
+    mod.instr_count = array_is_ascii(M_K_,sizeof(M_K_)) ? 31 : 15;
+  }
+//  printf("mod.instr_count %d\n",mod.instr_count);
+//  exit(1);
+
 //  printf("instruments:\n");
-  mod.instr_count = 31;
   for( i=0 ; i<mod.instr_count ; i++ ){
     FILE_INSTR instr;
-    long pos;
 
-    pos = ftell(f);
     if(1!=fread(&instr,sizeof(instr),1,f)) FATAL("!fread instr %d",i);
-
-//    // euristica 15/31 strumenti - broken
-//    if( i==15 && !array_is_ascii(instr.name,sizeof(instr.name))){
-//      mod.instr_count = 15;
-//      fseek(f,pos,SEEK_SET);  // undo fread'ing
-//      break;
-//    }
 
     strncpy(mod.instr[i].name,instr.name,sizeof(mod.instr[i].name));
 
@@ -69,11 +86,13 @@ void mod_import( FILE *f )
 //  exit(1);
 
   mod.song_len = read_u8(f);
-  printf("song_len %d\n",mod.song_len);
+//  printf("song_len %d\n",mod.song_len);
+//  exit(1);
 
-  mod.start_bpm = read_u8(f);
-  printf("start_bpm %d\n",mod.start_bpm);
-  
+  mod.song_end = read_u8(f);
+//  printf("mod.song_end %d\n",mod.song_end);
+//  exit(1);
+
   assert(1==fread(&mod.sequence,sizeof(mod.sequence),1,f));
 
   {
@@ -119,7 +138,7 @@ void mod_import( FILE *f )
     int i;
     for( i=0 ; i<mod.instr_count ; i++ ){
       if(!mod.instr[i].len)continue;
-      printf("pcm %d\n",i);
+//      printf("pcm %d\n",i);
       mod.instr[i].wavetable = (int8_t*)malloc(mod.instr[i].len);
       assert(mod.instr[i].wavetable);
       assert(1==fread(mod.instr[i].wavetable,mod.instr[i].len,1,f));
