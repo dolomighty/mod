@@ -26,13 +26,13 @@ all : main
 
 .PHONY : run
 run : main
-	./$^
+	./$^ ../groove.mod
 
 
 
 
 OBS+=main.o
-#OBS+=mod.o
+OBS+=mod.o
 
 $(OBS) : $(SRC) $(HDR)
 
