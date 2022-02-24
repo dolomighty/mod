@@ -39,7 +39,13 @@ int main( int argc , char *argv[] ){
   }
 
   SDL_PauseAudioDevice(dev, 0);  // start audio playing.
-  mod_main(have.freq);
+
+//  mod_play("echo15.mod",have.freq);
+//  mod_play("echo31.mod",have.freq);
+//  mod_play("test.mod",have.freq);
+  mod_play("../AEIOU.mod",have.freq);
+  getchar();
+  
   SDL_CloseAudioDevice(dev);
 
   return 0 ;

@@ -1,8 +1,9 @@
 
-#include <stdio.h>
+
 
 // IMPL
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -77,8 +78,8 @@ typedef struct MOD {
   char songname[20+1];
   INSTR instr[31];
   int instr_count;
-  int song_len;
-  int song_end;
+  int seq_len;
+  int seq_restart;
   uint8_t sequence[128];
   int patt_count;
   FILE_PATTERN *pattern;
@@ -108,22 +109,25 @@ typedef struct CURRENT {
   char running:1;
 } CURRENT;
 
-volatile CURRENT current;
+static CURRENT current;
 
 
 
 typedef struct VOICE {
   int8_t *wavetable;  // 8bit pcm signed
-  int8_t volume;  // 0..64
-  int32_t index;
-  int32_t incr;
-  int32_t loop_end;
-  int32_t loop_len;
+  int8_t  volume;  // 0..64
+  uint8_t pan;  // 0..255
+  int32_t index;   // .16
+  int32_t incr;     // .16
+  int32_t loop_end; // .16
+  int32_t loop_len; // .16
+  int period;
   int effect;
   int fxparam;
+  int out;  // pcm signed
 } VOICE;
 
-volatile VOICE voice[4];
+static VOICE voice[4];
 
 
 
@@ -146,7 +150,8 @@ void endian( void *arr , int size ){
   }
 }
 
-int read_u8( FILE *f ){
+
+uint8_t read_u8( FILE *f ){
   uint8_t v;
   assert(1==fread(&v,sizeof(v),1,f));
   return v;
@@ -168,6 +173,12 @@ int read_u8( FILE *f ){
 
 
 
+void advance_seq(){
+  current.seqpos++;
+  if( current.seqpos < mod.seq_len ) return;
+  current.seqpos = mod.seq_restart;
+}
+
 void advance(){
   // regole di avanzamento di default
   current.tick++;
@@ -178,42 +189,64 @@ void advance(){
   if( current.line < 64 ) return;
   current.line = 0;
 
-  current.seqpos++;
-  if( current.seqpos < mod.song_len ) return;
-  current.seqpos = 0;
+  advance_seq();
 }
 
+
+
+static void bpm_set( int bpm ){
+  current.bpm = bpm;
+  // numero magico dai docs e dal confronto con FT2
+  current.samples_per_tick = 2.5*current.sample_rate/current.bpm;
+}
+
+static void incr_set( int track ){
+  // numero magico dai docs e dal confronto con FT2
+  voice[track].incr = 3579545.25*65536/current.sample_rate/voice[track].period;
+}
 
 
 static void tick(){
   // eseguita ad ogni tick
 
+restart:
   current.pattern = mod.sequence[current.seqpos];
 
   if(current.tick==0){
-    const char *sep = "\n";
+    char lineno[32];
+    const char *sep = lineno;
     int track;
+    sprintf(lineno,"\n%2d-%2x :  ",current.pattern,current.line);
     for( track=0 ; track<TRACKS ; track++ ){
       // al tick 0 si parsano le note
 
       FILE_NOTE n = mod.pattern[current.pattern].line[current.line].track[track];
-      int instrument = INSTRUMENT(n);
+      int instr = INSTRUMENT(n);
       int period     = PERIOD(n);
       voice[track].effect  = EFFECT(n);
       voice[track].fxparam = FXPARAM(n);
 
-      printf("%s%4d %02d %x%02x"
+      char period_str[16]="";
+      if(period) sprintf(period_str,"%4d",period);
+      char instr_str[16]="";
+      if(instr) sprintf(instr_str,"%2d",instr);
+      char effect_str[16]="-";
+      if(voice[track].effect) sprintf(effect_str,"%1x",voice[track].effect);
+      char fxparam_str[16]="--";
+      if(voice[track].fxparam) sprintf(fxparam_str,"%02x",voice[track].fxparam);
+
+      fprintf(stderr,"%s%4s %2s %1s%2s"
         ,sep
-        ,period
-        ,instrument
-        ,voice[track].effect
-        ,voice[track].fxparam
+        ,period_str
+        ,instr_str
+        ,effect_str
+        ,fxparam_str
       );
-      sep = "   ";
+      sep = "  :  ";
 
       if(period){
-        // nmero magico dai docs e dal confronto con FT2
-        voice[track].incr = 3579545.25*65536/current.sample_rate/period;
+        voice[track].period = period;
+        incr_set(track);
 
 //          printf("tr %d period %d incr %d\n"
 //            ,track
@@ -222,14 +255,13 @@ static void tick(){
 //          );
       }
 
-      if(instrument){
-        INSTR *I = &mod.instr[instrument-1];
+      if(instr){
+        INSTR *I = &mod.instr[instr-1];
         voice[track].index     = 0; // retrig
         voice[track].wavetable = I->wavetable;
         voice[track].volume    = I->volume;
-        if(!voice[track].volume) voice[track].volume = 64; // default
-        voice[track].loop_len  = I->loop_len*65536;
-        voice[track].loop_end  = I->loop_end*65536;
+        voice[track].loop_len  = I->loop_len*65536; // .16
+        voice[track].loop_end  = I->loop_end*65536; // .16
 //        printf("tr %d in %d vo %d ll %d le %d name %s\n"
 //          ,track
 //          ,instrument
@@ -245,9 +277,21 @@ static void tick(){
         case 0xC : // volume
           voice[track].volume = voice[track].fxparam;
         break;
+        case 0xD : // pattern break
+          current.tick = 255;
+          current.line = 255;
+          advance();  // tick e line vengono resettati, seqpos incrementa
+          goto restart;
+        break;
+        case 0x8 : // pan pos
+          voice[track].pan = voice[track].fxparam;
+        break;
+        case 0x9 : // sample offset
+          voice[track].index = voice[track].fxparam*256*65536;
+        break;
         case 0xF : // set speed
-          if(voice[track].fxparam<32) current.speed = voice[track].fxparam;
-          else                        current.bpm   = voice[track].fxparam;
+          if(voice[track].fxparam>=32){ bpm_set(voice[track].fxparam); break; }
+          current.speed = voice[track].fxparam;
         break;
       }
     } // for track
@@ -263,8 +307,12 @@ static void tick(){
         case 0x0 : // arpeggio
         break;
         case 0x1 : // portamento up
+          voice[track].period -= voice[track].fxparam;
+          incr_set(track);
         break;
         case 0x2 : // portamento down
+          voice[track].period += voice[track].fxparam;
+          incr_set(track);
         break;
         case 0x3 : // portamento to note
         break;
@@ -277,8 +325,6 @@ static void tick(){
         case 0x7 : // tremolo
         break;
         case 0x8 : // pan
-        break;
-        case 0x9 : // sample offset
         break;
         case 0xA : // volume slide
         break;
@@ -307,59 +353,6 @@ static void tick(){
 
 
 
-
-
-void mod_play( int sample_rate )
-// IMPL
-{
-
-  current.running=0;
-
-  memset((void*)&current,0,sizeof(current));
-  memset((void*)&voice,0,sizeof(voice));
-
-  current.speed = 6;    // default
-  current.bpm   = 125;  // default
-  current.frame = 0;
-  current.sample_rate = sample_rate;
-  // nmero magico dai docs e dal confronto con FT2
-  current.samples_per_tick = 2.5*current.sample_rate/current.bpm;
-  tick();
-
-//  {
-//    INSTR *I = &mod.instr[7];
-//    int tr;
-//    for( tr=0 ; tr<TRACKS ; tr++ ){
-//      voice[tr].index     = 0;
-//      voice[tr].incr      = 64;
-//      voice[tr].wavetable = I->wavetable;
-//      voice[tr].volume    = 64;
-//      voice[tr].loop_len  = I->loop_len*65536;
-//      voice[tr].loop_end  = I->loop_end*65536;
-//    }
-//  }
-
-  current.running=1;
-}
-// ENDIMPL
-
-
-
-void mod_main( int sample_rate )
-// IMPL
-{
-//  FILE *f = fopen("echo15.mod","rb");
-  FILE *f = fopen("echo31.mod","rb");
-//  FILE *f = fopen("test.mod","rb");
-  assert(f);
-  mod_import(f);
-  fclose(f);
-  mod_play(sample_rate);
-  getchar();
-}
-
-
-
 //void dump_voice()
 //{
 //  int track;
@@ -376,38 +369,7 @@ void mod_main( int sample_rate )
 //}
 
 
-
-
-
-
-int voice_sample( int trk ){
-  volatile VOICE *V = &voice[trk];
-  if(!V->wavetable)return 0;
-  int i = V->index/65536;
-  int s = (int)V->wavetable[i] * (int)V->volume;   // -128*64= -8192   +127*64= 8128
-//  int s = (rand()&255) * (int)V->volume;   // -128*64= -8192   +127*64= 8128
-  if(!V->incr)return s;
-  V->index += V->incr;
-  if( V->index < V->loop_end ) return s;
-  // qui V->index >= V->loop_end, index potenzialmente non valido
-  if( V->loop_len ){
-    // loop - index è di nuovo valido
-    V->index -= V->loop_len;
-  } else {
-    // no loop - bisogna fermarsi e tornare ad un passo prima
-    V->incr = 0;
-    V->index = i*65536;
-  }
-  return s;
-}
-
-
-
-
-// ENDIMPL
-
-
-
+static int voice_sample( int trk );
 
 int mod_sample()
 // IMPL
@@ -443,6 +405,106 @@ int mod_sample()
 
 
 
+void mod_play( const char *path , int sample_rate )
+// IMPL
+{
+  FILE *f;
+  current.running=0;
+  f = fopen(path,"rb");
+  assert(f);
+  mod_import(f);
+  fclose(f);
+  // set defaults
+  memset((void*)&current,0,sizeof(current));
+  memset((void*)&voice,0,sizeof(voice));
+  current.sample_rate = sample_rate;
+  current.speed = 6;    // default
+  bpm_set(125);  // default
+  tick();
+  // go
+  current.running=1;
+}
+// ENDIMPL
 
 
+
+// IMPL
+
+
+//int voice_sample( int trk )
+//{
+//  VOICE *V = &voice[trk];
+//  if(!V->wavetable)return 0;
+//  if(!V->incr)return voice[trk].out;
+//
+//  int prev_index = V->index;
+//  V->index += V->incr;
+//
+//  if(V->incr>=65536){
+//    // la testa potrebbe saltare vari samples
+//    // facciamo la media dal precedente punto a quello attuale
+//    int p = prev_index/65536;
+//    int i = V->index/65536;
+//    int n = i-p;
+//    int sum = 0;
+//    while( p < i ){
+//        sum += V->wavetable[p];   // -128*64= -8192   +127*64= 8128
+//        p++;
+//    }
+//    voice[trk].out = sum * V->volume / n;
+//  }else{
+//    // incr < 65536 → incremento frazionario
+//    // la testa rimane sullo stesso sample varie volte
+//    // in questo caso famo lerp
+//    int a = (int)V->wavetable[V->index/65536-1] * (int)V->volume;   // -128*64= -8192   +127*64= 8128
+//    int b = (int)V->wavetable[V->index/65536-0] * (int)V->volume;   // -128*64= -8192   +127*64= 8128
+//    int t = V->index & 65535;
+//    voice[trk].out = a+(b-a)*t/65536;
+//  }
+//  if( V->index < V->loop_end ) return voice[trk].out;
+//  if( V->loop_len ){
+//    // loop - index è di nuovo valido
+//    V->index -= V->loop_len;
+//  } else {
+//    // no loop - bisogna fermarsi e tornare ad un passo prima
+//    V->incr = 0;
+//    V->index = prev_index;
+//  }
+//  return voice[trk].out;
+//}
+
+
+
+
+static int voice_sample( int trk )
+{
+  VOICE *V = &voice[trk];
+
+  if(!V->wavetable)return 0;
+  if(!V->incr)return V->out;
+
+  int prev = V->index;
+  V->index += V->incr;
+
+  if( V->index >= V->loop_end ){
+    if( V->loop_len ){
+      V->index -= V->loop_len;
+    }else{
+      V->incr = 0;
+      V->index = prev;
+    }
+  }
+
+  // lerp
+
+  int i = V->index/65536;
+  int8_t a = V->wavetable[i-1];
+  int8_t b = V->wavetable[i-0];
+  int t = V->index&65535;
+  V->out = (a+(b-a)*t/65536)*V->volume;
+  return V->out;
+}
+
+
+// ENDIMPL
 

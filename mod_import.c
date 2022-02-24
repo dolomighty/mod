@@ -1,5 +1,9 @@
 
+
+
 // http://lclevy.free.fr/mo3/mod.txt
+
+
 
 static int array_is_ascii( uint8_t *a , int bytes )
 {
@@ -13,11 +17,40 @@ static int array_is_ascii( uint8_t *a , int bytes )
 }
 
 
+static int guess_instr_count( FILE *f )
+{
+  // euristica 15/31 strumenti
+  FILE_INSTR instr;
+  long pos = ftell(f);
+  uint8_t M_K_[4];
+  fseek(f,0x438,SEEK_SET);  // puntiamo alla targa M.K. o simile
+  assert(1==fread(M_K_,sizeof(M_K_),1,f));
+  fseek(f,pos,SEEK_SET);  // undo fread'ing
+  return array_is_ascii(M_K_,sizeof(M_K_)) ? 31 : 15;
+}
+
+
+static void hexdump( void *_a , int bytes )
+{
+  uint8_t *a = (uint8_t *)_a; // alias
+  int o=0;
+  for(;bytes;bytes--,a++,o++)
+  {
+    if(o%16==0) printf("%04x ",o);
+    if(o%8==0) printf(" ");
+    printf("%02x ",*a);
+    if(o%16==15) printf("\n");
+  }
+  printf("\n");
+}
+
+
 void mod_import( FILE *f )
 // IMPL
 {
   int i;
 
+  // importante che sian allineate bit per bit
   assert(sizeof(FILE_INSTR)==30);
   assert(sizeof(FILE_NOTE)==4);
   assert(sizeof(FILE_LINE)==16);
@@ -28,22 +61,13 @@ void mod_import( FILE *f )
   assert(1==fread(mod.songname,20,1,f));
 //  printf("songname %s\n",mod.songname);
 
-  {
-    // euristica 15/31 strumenti
-    FILE_INSTR instr;
-    long pos = ftell(f);
-    uint8_t M_K_[4];
-    fseek(f,0x438,SEEK_SET);  // puntiamo alla targa M.K. o simile
-    assert(1==fread(M_K_,sizeof(M_K_),1,f));
-    fseek(f,pos,SEEK_SET);  // undo fread'ing
-    mod.instr_count = array_is_ascii(M_K_,sizeof(M_K_)) ? 31 : 15;
-  }
+  mod.instr_count = guess_instr_count(f);
 //  printf("mod.instr_count %d\n",mod.instr_count);
 //  exit(1);
 
 //  printf("instruments:\n");
   for( i=0 ; i<mod.instr_count ; i++ ){
-    FILE_INSTR instr;
+    FILE_INSTR instr={};
 
     if(1!=fread(&instr,sizeof(instr),1,f)) FATAL("!fread instr %d",i);
 
@@ -61,6 +85,9 @@ void mod_import( FILE *f )
 //      ,instr.loop_len
 //      ,instr.name
 //    );
+
+    mod.instr[i].volume = instr.volume;
+    if(!mod.instr[i].volume) mod.instr[i].volume = 64;  // default
 
     mod.instr[i].len = instr.len*2;
     mod.instr[i].wavetable  = 0;
@@ -85,12 +112,12 @@ void mod_import( FILE *f )
   }
 //  exit(1);
 
-  mod.song_len = read_u8(f);
-//  printf("song_len %d\n",mod.song_len);
+  mod.seq_len = read_u8(f);
+//  printf("seq_len %d\n",mod.seq_len);
 //  exit(1);
 
-  mod.song_end = read_u8(f);
-//  printf("mod.song_end %d\n",mod.song_end);
+  mod.seq_restart = read_u8(f);
+//  printf("mod.seq_restart %d\n",mod.seq_restart);
 //  exit(1);
 
   assert(1==fread(&mod.sequence,sizeof(mod.sequence),1,f));
