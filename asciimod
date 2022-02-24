@@ -1,0 +1,106 @@
+
+
+# formato mod ascii
+# dunque, mettiamo i commenti monolinea con #
+
+# strumenti
+# si usa instr id [item arg] ...
+# id >= 1
+# item [file|volume|pan|finetune|loopend|looplen]
+# items non riconosciuti → warning+skip
+# il path è sempre relativo a dove si trova questo file (cwd)
+# path assoluti non vengono presi
+# in caso di errore di path o file → warning+skip
+# lo strumento può venir specificato su varie linee
+
+instr 1 file "strings.wav" volume 22 pan -100
+instr 1 finetune -3 loopend 100 looplen 300
+
+# pattern
+# si indica con pattern id
+# id >= 1
+
+pattern 1
+
+# note
+# nota instr-id [fx arg] ...
+# tutte le note su una linea
+# spaziatura libera
+# la traccia a sinistra è la 1, andando a destra si incrementa
+# le tracce vanno separate con |
+# tracce in più a destra non specificate è come fossero note vuote
+# quindi linee vuote si indicano con almeno un |
+# notazione mod standard, anglosassone+ottava, diesis/bemolle (#b) accettati
+# commenti ok
+# una linea vuota termina il pattern
+# linee con solo commenti == linee vuote, in questo contesto
+
+c3  1    |          |       e3  6    |       c3  8
+         |                                                  # linea vuota
+c3  3    |          |       d3  5    |       f3  8 c10
+         |          |                |                      # linea vuota (layout consigliato)
+c3  1    |  d3 7    |       d3  5    |       f3  8      |   # il parser butta i canali vuoti in più
+|                                                           # linea vuota
+c3  1    |          |       f3  6    |       c3  8 c20
+         |          |                |               
+c3  3    |          |       f3  6    |                  |
+         |          |                |                  
+c3  2    |          |       f3  5    |       f3  8 c20
+         |          |                |               
+e3  4    | d3  7    |       f3  6    |       c3  9      |
+         |          |                |                  
+# questo termina il pattern
+
+
+pattern 2
+
+e3 4 | d3 7 | f3 6 | c3 9
+e3 4 | d3 7 | f3 6 | c3 9
+e3 4 | d3 7 | f3 6 | c3 9
+e3 4 | d3 7 | f3 6 | c3 9
+e3 4 | d3 7 | f3 6 | c3 9
+e3 4 | d3 7 | f3 6 | c3 9
+e3 4 | d3 7 | f3 6 | c3 9
+e3 4 | d3 7 | f3 6 | c3 9
+e3 4 | d3 7 | f3 6 | c3 9
+e3 4 | d3 7 | f3 6 | c3 9
+
+# la linea vuota ^^^  termina il pattern
+
+
+# sequenza
+# viene usata la sequenza dei pattern nel file
+# un pattern senza note viene interpretato come un richiamo
+# i pattern si possono -tecnicamente- ridefinire, ma viene preso solo l'ultimo in basso
+# pattern chiamati ma mai definiti → warning+skip
+
+
+pattern 1
+pattern 2
+pattern 1
+pattern 2
+pattern 3
+
+
+
+end
+
+↑↑↑ facoltativo
+
+all'end il parser si ferma
+quindi dopo si può scrivere qualunque cosa
+
+
+
+
+quindi riassumendo:
+parsing freeform
+i token sono parole o frasi quotate con "/'
+non prevedo escapes. utf8 va benissimo, c lo gestisce quindi ...
+commenti monolinea, placing qualunque
+i numeri si passano decimali o esa. esa direi prefissati da x
+
+ok iniziamo col parser
+
+
+
