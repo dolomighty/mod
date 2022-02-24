@@ -32,7 +32,7 @@ run : main
 
 
 OBS+=main.o
-OBS+=mod.o
+#OBS+=mod.o
 
 $(OBS) : $(SRC) $(HDR)
 

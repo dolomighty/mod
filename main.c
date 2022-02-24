@@ -1,53 +1,87 @@
 
 #include <stdlib.h>
-#include <SDL2/SDL.h>
-#include "mod.h"
+#include <stdio.h>
+#include <ctype.h>
+#include <assert.h>
+#include <string.h>
 #include "macros.h"
 
 
 
+//#define fgetc(f) fgetc(f);printf("%c",c);
 
 
-void audio_cb ( void *userdata , Uint8 *stream , int len_bytes ){
-  int16_t *frame = (int16_t*)stream ;
-  int len_frames = len_bytes / sizeof(*frame);
-  for ( ; len_frames > 0 ; len_frames -- , frame ++ ){
-    *frame = mod_sample();
+char *get_token0( FILE *f , char *token , int token_len ){
+
+  int c;
+  char *t=token;
+  
+restart:
+  // skip leading spaces
+  while(1){
+    c = fgetc(f);
+    if(c==EOF) return 0;
+    if(!isspace(c))break;
   }
+
+  // qui c != [space]
+
+  if(c=='#'){ // commento?
+    // butta tutto fino a fine linea
+    while(1){
+      c = fgetc(f);
+      if(c==EOF) return 0;
+      if(c=='\r')goto restart;
+      if(c=='\n')goto restart;
+    }
+  }
+
+  if( c=='"' || c=='\'' || c=='`' ){ // quot?
+    // mangia tutto fino alla chiusura
+    // il token è la frase tra quot
+    char quot=c;
+    while(1){
+      c = fgetc(f);
+      if(c==EOF)break;  // sgrammaticato, ma chissene
+      if(c==quot)break;
+      *t++ = c;
+    }
+    *t = 0;
+    return token;
+  }
+
+  // token isolato
+  while(1){
+    *t++ = c;
+    c = fgetc(f);
+    if(c==EOF)break;
+    if(isspace(c))break;
+  }
+  *t = 0;
+
+  return token;
 }
 
 
+char *get_token( FILE *f , char *token , int token_len ){
+  if(!get_token0(f,token,token_len))return 0;
+  if(0!=strcmp(token,"end"))return token;
+  fseek(f,0,SEEK_END);
+  return 0;
+}
+
+
+
 int main( int argc , char *argv[] ){
-  
-  if( 0 != SDL_Init( SDL_INIT_AUDIO )) FATAL("SDL_Init: %s\n",SDL_GetError());
-  atexit(SDL_Quit);
-    
-  SDL_AudioSpec want, have;
-  SDL_AudioDeviceID dev;
-
-  SDL_zero(want);
-  want.freq     = 48000;
-  want.format   = AUDIO_S16;
-  want.channels = 1;
-  want.samples  = 256;
-  want.callback = audio_cb;
-
-  dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0 );
-  if( ! dev ){
-    printf("Failed to open audio: %s\n", SDL_GetError());
-    return 1 ;
+  FILE *f = fopen("test.am","rb");
+  assert(f);
+  while(1)
+  {
+    char token[256];
+    if(!get_token(f,token,sizeof(token)))break;
+    printf("%s\n",token);
   }
-
-  SDL_PauseAudioDevice(dev, 0);  // start audio playing.
-
-//  mod_play("echo15.mod",have.freq);
-//  mod_play("echo31.mod",have.freq);
-//  mod_play("test.mod",have.freq);
-  mod_play("../AEIOU.mod",have.freq);
-  getchar();
-  
-  SDL_CloseAudioDevice(dev);
-
+  fclose(f);
   return 0 ;
 }
 
